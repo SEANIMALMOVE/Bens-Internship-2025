@@ -27,4 +27,3 @@ def generate_spectrogram(audio_path, output_path, target_sr=44000, n_mels=128):
     torch.save(mel_db, output_path)
 
     return output_path
-
