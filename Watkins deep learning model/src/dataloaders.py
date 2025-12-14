@@ -1,24 +1,28 @@
-import torch
-from torch.utils.data import Dataset
-import os  
-from src.dataset import SpectrogramPTDataset
-from pathlib import Path
-
 from torch.utils.data import DataLoader
+from pathlib import Path
+from src.dataset import SpectrogramPTDataset
 
-ROOT_PATH = Path("..")  
+### batching 16 torch samples
 
-train_ds = SpectrogramPTDataset(ROOT_PATH/"Data/Spectrograms/train")
-val_ds   = SpectrogramPTDataset(ROOT_PATH/"Data/Spectrograms/val")
-test_ds  = SpectrogramPTDataset(ROOT_PATH/"Data/Spectrograms/test")
+def get_dataloaders(
+    spectrogram_root: Path,
+    batch_size: int = 16,
+):
+    """
+    Creates train / val / test dataloaders.
 
-batch_size = 16
+    spectrogram_root/
+        train/
+        val/
+        test/
+    """
 
-train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
-test_loader  = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+    train_ds = SpectrogramPTDataset(spectrogram_root / "train")
+    val_ds   = SpectrogramPTDataset(spectrogram_root / "val")
+    test_ds  = SpectrogramPTDataset(spectrogram_root / "test")
 
-print("Train size:", len(train_ds))
-print("Val size:  ", len(val_ds))
-print("Test size: ", len(test_ds))
-# print("Shape example:", next(iter(train_loader))[0].shape)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    test_loader  = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+    return train_loader, val_loader, test_loader

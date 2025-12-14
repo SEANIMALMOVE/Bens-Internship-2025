@@ -3,6 +3,8 @@ from torch.utils.data import Dataset
 import torchaudio
 import os
 
+### Get one torch sample from 1 spectogram
+
 # Custom Dataset for loading spectrogram .pt files
 class SpectrogramPTDataset(Dataset):
     def __init__(self, root_dir, transform=None):
