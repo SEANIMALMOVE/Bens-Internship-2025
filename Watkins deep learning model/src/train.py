@@ -7,3 +7,7 @@
 # after training: output correct class logits become larger, wrong class logits become smaller, loss decreases, accuracy increases (shape of tensors dont change, only the meaning of the numbers)
 
 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from src.model import BaselineCNN
