@@ -62,6 +62,7 @@ class BaselineCNN(nn.Module):
 
             nn.ReLU(), # non-linear activation
             nn.Dropout(0.4), # randomly turn off 40% of neurons during training to prevent overfitting
+            # 25% might be enugh
             nn.Linear(128, num_classes) # output layer
         )
 
