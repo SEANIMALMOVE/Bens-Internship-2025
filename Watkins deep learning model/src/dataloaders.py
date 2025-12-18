@@ -15,8 +15,8 @@ except Exception:
 
 def get_dataloaders(
     spectrogram_root: Path,
-    batch_size: int = 16,
-    num_workers: int = 2,
+    batch_size: int = 64,
+    num_workers: int = 4,
 ):
     """
     Creates train / val / test dataloaders.

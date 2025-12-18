@@ -27,18 +27,20 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
+import os
+import sys
 from tqdm import tqdm # type: ignore
 
 # Import modules robustly so `py -m src.train` and `py src/train.py` both work
 try:
-    from .model import BaselineCNN
+    from .model import get_model, get_weighted_criterion
     from .dataloaders import get_dataloaders
 except Exception:
     try:
-        from model import BaselineCNN
+        from model import get_model, get_weighted_criterion
         from dataloaders import get_dataloaders
     except Exception:
-        from src.model import BaselineCNN
+        from src.model import get_model, get_weighted_criterion
         from src.dataloaders import get_dataloaders
 
 
@@ -46,12 +48,13 @@ except Exception:
 # Training class
 # =========================
 
-class BaselineCNNTrainer:
+class Trainer:
     def __init__(
         self,
         spectrogram_dir: Path,
         checkpoint_path: Path,
-        batch_size: int = 16,
+        model_name: str = "baseline",
+        batch_size: int = 64,
         max_epochs: int = 10,
         patience: int = 3,
         lr: float = 1e-3,
@@ -61,12 +64,27 @@ class BaselineCNNTrainer:
         self.max_epochs = max_epochs
         self.patience = patience
         self.checkpoint_path = checkpoint_path
+        self.model_name = model_name
 
         # -----------------------
         # Data
         # -----------------------
+        # Avoid DataLoader worker hangs when running inside interactive
+        # environments (notebooks) on Windows — fall back to num_workers=0.
+        interactive = False
+        try:
+            # If IPython is available and active, assume interactive
+            from IPython import get_ipython
+
+            if get_ipython() is not None:
+                interactive = True
+        except Exception:
+            interactive = False
+
+        effective_num_workers = 0 if interactive else 2
+
         self.train_loader, self.val_loader, self.test_loader = get_dataloaders(
-            spectrogram_dir, batch_size=batch_size, num_workers=2
+            spectrogram_dir, batch_size=batch_size, num_workers=effective_num_workers
         )
 
         self.num_classes = len(self.train_loader.dataset.classes)
@@ -74,15 +92,60 @@ class BaselineCNNTrainer:
         # -----------------------
         # Model
         # -----------------------
-        self.model = BaselineCNN(
-            input_channels=1,
-            num_classes=self.num_classes
-        ).to(self.device)
+        self.model = get_model(model_name=self.model_name, num_classes=self.num_classes, input_channels=1, freeze_backbone=True).to(self.device)
+
+        # -----------------------
+        # Ensure checkpoint directory and per-model history file exist
+        # -----------------------
+        try:
+            Path(self.checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        # Create a unique history file per checkpoint (e.g. baseline_best -> baseline_best_training_history.csv)
+        self.history_path = Path(self.checkpoint_path).with_name(f"{Path(self.checkpoint_path).stem}_training_history.csv")
+        # If a previous run left artifacts, remove them so this run starts fresh
+        try:
+            cp = Path(self.checkpoint_path)
+            if cp.exists():
+                try:
+                    cp.unlink()
+                except Exception:
+                    pass
+            if self.history_path.exists():
+                try:
+                    self.history_path.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            if not self.history_path.exists() or self.history_path.stat().st_size == 0:
+                with open(self.history_path, "w", encoding="utf-8") as fh:
+                    fh.write("epoch,train_loss,val_loss,train_acc,val_acc,lr\n")
+        except Exception:
+            # non-fatal; continue without history if filesystem disallows it
+            pass
+
+        # Create an initial checkpoint file at start of run so the "best" path exists.
+        try:
+            # save the empty/initial model to the configured best path only
+            self.save_checkpoint()
+        except Exception:
+            pass
 
         # -----------------------
         # Training components
         # -----------------------
-        self.criterion = nn.CrossEntropyLoss()
+        # compute class-balanced weights from training labels and use in CrossEntropyLoss
+        try:
+            train_labels = [label for (_path, label) in self.train_loader.dataset.samples]
+            self.criterion = get_weighted_criterion(train_labels, num_classes=self.num_classes, device=self.device)
+        except Exception:
+            # fallback to unweighted loss if something goes wrong
+            self.criterion = nn.CrossEntropyLoss()
+
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
 
         # -----------------------
@@ -177,16 +240,24 @@ class BaselineCNNTrainer:
     # -----------------------
     # Save checkpoint
     # -----------------------
-    def save_checkpoint(self):
-        torch.save(self.model.state_dict(), self.checkpoint_path)
+    def save_checkpoint(self, epoch=None):
+        """Save the current model state.
+
+        - Always save to the configured `self.checkpoint_path` (keeps the best model).
+        - No epoch-stamped checkpoints or per-epoch history files are created.
+        """
+        try:
+            torch.save(self.model.state_dict(), self.checkpoint_path)
+        except Exception as exc:
+            print(f"Failed to save checkpoint to {self.checkpoint_path}: {exc}", flush=True)
 
     # -----------------------
     # Full training loop
     # -----------------------
 
     def fit(self):
-        history_path = Path(self.checkpoint_path).with_name("training_history.csv")
-        first_epoch = not history_path.exists()
+        # use history file created during init; append each epoch
+        history_path = getattr(self, "history_path", Path(self.checkpoint_path).with_name(f"{Path(self.checkpoint_path).stem}_training_history.csv"))
 
         for epoch in range(1, self.max_epochs + 1):
 
@@ -205,14 +276,30 @@ class BaselineCNNTrainer:
             )
 
             # append metrics to CSV for later plotting
-            mode = "a"
-            if first_epoch:
-                mode = "w"
-            with open(history_path, mode, encoding="utf-8") as fh:
-                if first_epoch:
-                    fh.write("epoch,train_loss,val_loss,train_acc,val_acc,lr\n")
-                    first_epoch = False
-                fh.write(f"{epoch},{train_loss:.6f},{val_loss:.6f},{train_acc:.4f},{val_acc:.4f},{lr}\n")
+            try:
+                with open(history_path, "a", encoding="utf-8") as fh:
+                    fh.write(f"{epoch},{train_loss:.6f},{val_loss:.6f},{train_acc:.4f},{val_acc:.4f},{lr}\n")
+            except Exception:
+                # non-fatal; continue if filesystem disallows writing history
+                pass
+
+            # Early stopping: save best checkpoint and stop when no improvement
+            if val_loss < self.best_val_loss:
+                self.best_val_loss = val_loss
+                self.epochs_without_improvement = 0
+                try:
+                    self.save_checkpoint()
+                    print(f"Saved improved checkpoint to: {self.checkpoint_path}", flush=True)
+                except Exception as exc:
+                    print(f"Failed to save checkpoint on improvement: {exc}", flush=True)
+            else:
+                self.epochs_without_improvement += 1
+                print(f"No improvement for {self.epochs_without_improvement}/{self.patience} epochs", flush=True)
+                if self.epochs_without_improvement >= self.patience:
+                    print(f"Early stopping: no improvement for {self.patience} epochs.", flush=True)
+                    break
+
+        print("Training finished.", flush=True)
 
 
 # =========================
@@ -220,19 +307,30 @@ class BaselineCNNTrainer:
 # =========================
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", choices=["baseline", "efficientnet"], default="baseline")
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--patience", type=int, default=3)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    args = parser.parse_args()
+
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     SPECT_DIR = PROJECT_ROOT / "Data" / "Spectrograms"
-    CHECKPOINT_PATH = PROJECT_ROOT / "baseline_cnn_best.pth"
+    CHECKPOINT_PATH = PROJECT_ROOT / f"{args.model}_best.pth"
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-    trainer = BaselineCNNTrainer(
+    trainer = Trainer(
         spectrogram_dir=SPECT_DIR,
         checkpoint_path=CHECKPOINT_PATH,
-        batch_size=16,
-        max_epochs=1,
-        patience=3,
-        lr=1e-3,
+        model_name=args.model,
+        batch_size=args.batch_size,
+        max_epochs=args.epochs,
+        patience=args.patience,
+        lr=args.lr,
         device=DEVICE,
     )
 
