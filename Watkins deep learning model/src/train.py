@@ -47,7 +47,6 @@ except Exception:
 # =========================
 
 class BaselineCNNTrainer:
-    print(">>> train.py startedccccccccccccccccc", flush=True)
     def __init__(
         self,
         spectrogram_dir: Path,
@@ -101,7 +100,6 @@ class BaselineCNNTrainer:
     # One training epoch
     # -----------------------
     def train_one_epoch(self) -> float:
-        print(">>> train_one_epoch sbbbbbbbbbbbbbbbbtarted", flush=True)
         self.model.train()
         running_loss = 0.0
 
@@ -210,7 +208,6 @@ class BaselineCNNTrainer:
 # =========================
 
 if __name__ == "__main__":
-    print(">>> train.pasdsadsadsadsay started", flush=True)
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     SPECT_DIR = PROJECT_ROOT / "Data" / "Spectrograms"
     CHECKPOINT_PATH = PROJECT_ROOT / "baseline_cnn_best.pth"
