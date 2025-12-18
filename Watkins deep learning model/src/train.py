@@ -66,7 +66,7 @@ class BaselineCNNTrainer:
         # Data
         # -----------------------
         self.train_loader, self.val_loader, self.test_loader = get_dataloaders(
-            spectrogram_dir, batch_size=batch_size
+            spectrogram_dir, batch_size=batch_size, num_workers=2
         )
 
         self.num_classes = len(self.train_loader.dataset.classes)
@@ -98,9 +98,11 @@ class BaselineCNNTrainer:
     # -----------------------
     # One training epoch
     # -----------------------
-    def train_one_epoch(self, epoch: int) -> float:
+    def train_one_epoch(self, epoch: int) -> tuple:
         self.model.train()
         running_loss = 0.0
+        correct = 0
+        total = 0
 
         desc = f"Epoch {epoch}/{self.max_epochs} Training"
         pbar = tqdm(
@@ -122,17 +124,25 @@ class BaselineCNNTrainer:
 
             running_loss += loss.item()
 
+            preds = out.argmax(dim=1)
+            correct += (preds == y).sum().item()
+            total += y.size(0)
+
             pbar.set_postfix({
                 "loss": f"{loss.item():.4f}"
             })
 
-        return running_loss / len(self.train_loader)
+        avg_loss = running_loss / len(self.train_loader)
+        acc = 100.0 * correct / total if total > 0 else 0.0
+        return avg_loss, acc
     # -----------------------
     # Validation
     # -----------------------
-    def validate(self, epoch: int) -> float:
+    def validate(self, epoch: int) -> tuple:
         self.model.eval()
         running_loss = 0.0
+        correct = 0
+        total = 0
 
         desc = f"Epoch {epoch}/{self.max_epochs} Validation"
         pbar = tqdm(
@@ -151,11 +161,17 @@ class BaselineCNNTrainer:
 
                 running_loss += loss.item()
 
+                preds = out.argmax(dim=1)
+                correct += (preds == y).sum().item()
+                total += y.size(0)
+
                 pbar.set_postfix({
                     "loss": f"{loss.item():.4f}"
                 })
 
-        return running_loss / len(self.val_loader)
+        avg_loss = running_loss / len(self.val_loader)
+        acc = 100.0 * correct / total if total > 0 else 0.0
+        return avg_loss, acc
 
 
     # -----------------------
@@ -169,18 +185,34 @@ class BaselineCNNTrainer:
     # -----------------------
 
     def fit(self):
-        for epoch in range(1, self.max_epochs + 1):
-            print(f">>> epoch {epoch} started", flush=True)
+        history_path = Path(self.checkpoint_path).with_name("training_history.csv")
+        first_epoch = not history_path.exists()
 
-            train_loss = self.train_one_epoch(epoch)
-            val_loss = self.validate(epoch)
+        for epoch in range(1, self.max_epochs + 1):
+
+            train_loss, train_acc = self.train_one_epoch(epoch)
+            val_loss, val_acc = self.validate(epoch)
+
+            lr = float(self.optimizer.param_groups[0].get("lr", 0.0))
 
             print(
                 f"Epoch {epoch}/{self.max_epochs} "
                 f"| Train Loss: {train_loss:.4f} "
-                f"| Val Loss: {val_loss:.4f}",
+                f"| Val Loss: {val_loss:.4f} "
+                f"| Train Acc: {train_acc:.2f} "
+                f"| Val Acc: {val_acc:.2f}",
                 flush=True
             )
+
+            # append metrics to CSV for later plotting
+            mode = "a"
+            if first_epoch:
+                mode = "w"
+            with open(history_path, mode, encoding="utf-8") as fh:
+                if first_epoch:
+                    fh.write("epoch,train_loss,val_loss,train_acc,val_acc,lr\n")
+                    first_epoch = False
+                fh.write(f"{epoch},{train_loss:.6f},{val_loss:.6f},{train_acc:.4f},{val_acc:.4f},{lr}\n")
 
 
 # =========================
@@ -198,7 +230,7 @@ if __name__ == "__main__":
         spectrogram_dir=SPECT_DIR,
         checkpoint_path=CHECKPOINT_PATH,
         batch_size=16,
-        max_epochs=10,
+        max_epochs=1,
         patience=3,
         lr=1e-3,
         device=DEVICE,

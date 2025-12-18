@@ -16,6 +16,7 @@ except Exception:
 def get_dataloaders(
     spectrogram_root: Path,
     batch_size: int = 16,
+    num_workers: int = 2,
 ):
     """
     Creates train / val / test dataloaders.
@@ -30,8 +31,8 @@ def get_dataloaders(
     val_ds   = SpectrogramPTDataset(spectrogram_root / "val")
     test_ds  = SpectrogramPTDataset(spectrogram_root / "test")
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,num_workers=0,  pin_memory=True)
-    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
-    test_loader  = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    test_loader  = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
 
     return train_loader, val_loader, test_loader

@@ -39,8 +39,8 @@ class SpectrogramPTDataset(Dataset):
         if tensor.dim() == 3 and tensor.shape[0] not in [1,3]:
             tensor = tensor.permute(2, 0, 1)
 
-        # normalize manually (optional)
-        tensor = (tensor - tensor.mean()) / (tensor.std() + 1e-6)
+        # NOTE: offline normalization should be applied when generating .pt files.
+        # Removed online normalization for faster training.
 
         # ------------------------------------------------------------
         # FIX: Pad or crop all spectrograms to a fixed width
