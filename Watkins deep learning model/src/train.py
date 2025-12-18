@@ -57,7 +57,6 @@ class BaselineCNNTrainer:
         lr: float = 1e-3,
         device: str = "cpu",
     ):
-        print(">>> train.py started", flush=True)
         self.device = device
         self.max_epochs = max_epochs
         self.patience = patience
@@ -99,15 +98,17 @@ class BaselineCNNTrainer:
     # -----------------------
     # One training epoch
     # -----------------------
-    def train_one_epoch(self) -> float:
+    def train_one_epoch(self, epoch: int) -> float:
         self.model.train()
         running_loss = 0.0
 
+        desc = f"Epoch {epoch}/{self.max_epochs} Training"
         pbar = tqdm(
             self.train_loader,
-            desc="Training",
+            desc=desc,
             leave=True,
-            ncols=100
+            ncols=100,
+            unit="batch",
         )
 
         for x, y in pbar:
@@ -121,24 +122,25 @@ class BaselineCNNTrainer:
 
             running_loss += loss.item()
 
-            # 👇 THIS is the visual feedback
             pbar.set_postfix({
-                "batch_loss": f"{loss.item():.4f}"
+                "loss": f"{loss.item():.4f}"
             })
 
         return running_loss / len(self.train_loader)
     # -----------------------
     # Validation
     # -----------------------
-    def validate(self) -> float:
+    def validate(self, epoch: int) -> float:
         self.model.eval()
         running_loss = 0.0
 
+        desc = f"Epoch {epoch}/{self.max_epochs} Validation"
         pbar = tqdm(
             self.val_loader,
-            desc="Validation",
+            desc=desc,
             leave=True,
-            ncols=100
+            ncols=100,
+            unit="batch",
         )
 
         with torch.no_grad():
@@ -150,7 +152,7 @@ class BaselineCNNTrainer:
                 running_loss += loss.item()
 
                 pbar.set_postfix({
-                    "batch_loss": f"{loss.item():.4f}"
+                    "loss": f"{loss.item():.4f}"
                 })
 
         return running_loss / len(self.val_loader)
@@ -167,33 +169,11 @@ class BaselineCNNTrainer:
     # -----------------------
 
     def fit(self):
-        print(">>> fit() entered", flush=True)
         for epoch in range(1, self.max_epochs + 1):
             print(f">>> epoch {epoch} started", flush=True)
-            train_loss = 0.0
-            val_loss = 0.0
 
-            self.model.train()
-            for x, y in self.train_loader:
-                x, y = x.to(self.device), y.to(self.device)
-                self.optimizer.zero_grad()
-                out = self.model(x)
-                loss = self.criterion(out, y)
-                loss.backward()
-                self.optimizer.step()
-                train_loss += loss.item()
-
-            train_loss /= len(self.train_loader)
-
-            self.model.eval()
-            with torch.no_grad():
-                for x, y in self.val_loader:
-                    x, y = x.to(self.device), y.to(self.device)
-                    out = self.model(x)
-                    loss = self.criterion(out, y)
-                    val_loss += loss.item()
-
-            val_loss /= len(self.val_loader)
+            train_loss = self.train_one_epoch(epoch)
+            val_loss = self.validate(epoch)
 
             print(
                 f"Epoch {epoch}/{self.max_epochs} "

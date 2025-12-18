@@ -28,12 +28,10 @@ class SpectrogramPTDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        print(f">>> loading sample {idx}", flush=True)
 
         path, label = self.samples[idx]
 
         tensor = torch.load(path)  # loads spectrogram tensor
-        print(f">>> loaded tensor {tensor.shape}", flush=True)
 
         # ensure tensor shape is [C, H, W]
         if tensor.dim() == 2:               # [H, W]
