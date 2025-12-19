@@ -7,9 +7,10 @@ import os
 
 # Custom Dataset for loading spectrogram .pt files
 class SpectrogramPTDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
+    def __init__(self, root_dir, transform=None, cache_in_memory: bool = False):
         self.root_dir = root_dir
         self.transform = transform
+        self.cache_in_memory = bool(cache_in_memory)
 
         self.samples = []
         self.classes = sorted(os.listdir(root_dir))
@@ -24,6 +25,18 @@ class SpectrogramPTDataset(Dataset):
                         self.class_to_idx[class_name]
                     ))
 
+        # Optional in-memory cache to avoid repeated disk reads when dataset fits RAM
+        self._cache = {} if self.cache_in_memory else None
+        if self.cache_in_memory:
+            for idx, (path, _lbl) in enumerate(self.samples):
+                try:
+                    t = torch.load(path)
+                    # ensure channel-first format is preserved as on-disk
+                    self._cache[idx] = t
+                except Exception:
+                    # if a single file fails to load, skip caching that one
+                    pass
+
     def __len__(self):
         return len(self.samples)
 
@@ -31,7 +44,10 @@ class SpectrogramPTDataset(Dataset):
 
         path, label = self.samples[idx]
 
-        tensor = torch.load(path)  # loads spectrogram tensor
+        if self.cache_in_memory and self._cache is not None and idx in self._cache:
+            tensor = self._cache[idx]
+        else:
+            tensor = torch.load(path)  # loads spectrogram tensor
 
         # ensure tensor shape is [C, H, W]
         if tensor.dim() == 2:               # [H, W]

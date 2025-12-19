@@ -26,6 +26,7 @@ NOTE:
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from pathlib import Path
 import os
 import sys
@@ -81,10 +82,25 @@ class Trainer:
         except Exception:
             interactive = False
 
-        effective_num_workers = 0 if interactive else 2
+        # sensible default: leave one core free
+        try:
+            import multiprocessing
+
+            cores = multiprocessing.cpu_count()
+        except Exception:
+            cores = 2
+
+        effective_num_workers = 0 if interactive else max(1, min(8, cores - 1))
+
+        pin_memory = True if str(device).startswith("cuda") else False
 
         self.train_loader, self.val_loader, self.test_loader = get_dataloaders(
-            spectrogram_dir, batch_size=batch_size, num_workers=effective_num_workers
+            spectrogram_dir,
+            batch_size=batch_size,
+            num_workers=effective_num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=(not interactive),
+            prefetch_factor=2,
         )
 
         self.num_classes = len(self.train_loader.dataset.classes)
@@ -92,7 +108,9 @@ class Trainer:
         # -----------------------
         # Model
         # -----------------------
-        self.model = get_model(model_name=self.model_name, num_classes=self.num_classes, input_channels=1, freeze_backbone=True).to(self.device)
+        # For EfficientNet we want to fine-tune the backbone rather than freeze it
+        freeze_backbone = False if self.model_name.lower().startswith("efficientnet") else True
+        self.model = get_model(model_name=self.model_name, num_classes=self.num_classes, input_channels=1, freeze_backbone=freeze_backbone).to(self.device)
 
         # -----------------------
         # Ensure checkpoint directory and per-model history file exist
@@ -146,7 +164,22 @@ class Trainer:
             # fallback to unweighted loss if something goes wrong
             self.criterion = nn.CrossEntropyLoss()
 
-        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        # Use AdamW with a small weight decay for better generalization
+        self.optimizer = optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-4)
+
+        # LR scheduler based on validation loss
+        self.scheduler = ReduceLROnPlateau(self.optimizer, mode="min", factor=0.5, patience=2, verbose=True)
+
+        # Use AMP when on CUDA for faster training and lower memory
+        self.use_amp = True if (str(device).startswith("cuda") and torch.cuda.is_available()) else False
+        self.scaler = torch.cuda.amp.GradScaler() if self.use_amp else None
+
+        # enable cudnn autotuner when input sizes are fixed
+        try:
+            if str(device).startswith("cuda"):
+                torch.backends.cudnn.benchmark = True
+        except Exception:
+            pass
 
         # -----------------------
         # Early stopping state
@@ -177,13 +210,30 @@ class Trainer:
         )
 
         for x, y in pbar:
-            x, y = x.to(self.device), y.to(self.device)
+            x = x.to(self.device, non_blocking=True)
+            y = y.to(self.device, non_blocking=True)
 
-            self.optimizer.zero_grad()
-            out = self.model(x)
-            loss = self.criterion(out, y)
-            loss.backward()
-            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+
+            if self.use_amp:
+                with torch.cuda.amp.autocast():
+                    out = self.model(x)
+                    loss = self.criterion(out, y)
+                self.scaler.scale(loss).backward()
+                # gradient clipping (after unscale)
+                try:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                except Exception:
+                    pass
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                out = self.model(x)
+                loss = self.criterion(out, y)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                self.optimizer.step()
 
             running_loss += loss.item()
 
@@ -191,9 +241,7 @@ class Trainer:
             correct += (preds == y).sum().item()
             total += y.size(0)
 
-            pbar.set_postfix({
-                "loss": f"{loss.item():.4f}"
-            })
+            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
         avg_loss = running_loss / len(self.train_loader)
         acc = 100.0 * correct / total if total > 0 else 0.0
@@ -218,9 +266,15 @@ class Trainer:
 
         with torch.no_grad():
             for x, y in pbar:
-                x, y = x.to(self.device), y.to(self.device)
-                out = self.model(x)
-                loss = self.criterion(out, y)
+                x = x.to(self.device, non_blocking=True)
+                y = y.to(self.device, non_blocking=True)
+                if self.use_amp:
+                    with torch.cuda.amp.autocast():
+                        out = self.model(x)
+                        loss = self.criterion(out, y)
+                else:
+                    out = self.model(x)
+                    loss = self.criterion(out, y)
 
                 running_loss += loss.item()
 
@@ -228,9 +282,7 @@ class Trainer:
                 correct += (preds == y).sum().item()
                 total += y.size(0)
 
-                pbar.set_postfix({
-                    "loss": f"{loss.item():.4f}"
-                })
+                pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
         avg_loss = running_loss / len(self.val_loader)
         acc = 100.0 * correct / total if total > 0 else 0.0
@@ -281,6 +333,12 @@ class Trainer:
                     fh.write(f"{epoch},{train_loss:.6f},{val_loss:.6f},{train_acc:.4f},{val_acc:.4f},{lr}\n")
             except Exception:
                 # non-fatal; continue if filesystem disallows writing history
+                pass
+
+            # Scheduler step (ReduceLROnPlateau expects validation metric)
+            try:
+                self.scheduler.step(val_loss)
+            except Exception:
                 pass
 
             # Early stopping: save best checkpoint and stop when no improvement

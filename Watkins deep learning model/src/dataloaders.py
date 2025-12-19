@@ -17,6 +17,10 @@ def get_dataloaders(
     spectrogram_root: Path,
     batch_size: int = 64,
     num_workers: int = 4,
+    pin_memory: bool = True,
+    persistent_workers: bool = False,
+    prefetch_factor: int = 2,
+    cache_in_memory: bool = False,
 ):
     """
     Creates train / val / test dataloaders.
@@ -27,12 +31,39 @@ def get_dataloaders(
         test/
     """
 
-    train_ds = SpectrogramPTDataset(spectrogram_root / "train")
-    val_ds   = SpectrogramPTDataset(spectrogram_root / "val")
-    test_ds  = SpectrogramPTDataset(spectrogram_root / "test")
+    train_ds = SpectrogramPTDataset(spectrogram_root / "train", cache_in_memory=cache_in_memory)
+    val_ds = SpectrogramPTDataset(spectrogram_root / "val", cache_in_memory=False)
+    test_ds = SpectrogramPTDataset(spectrogram_root / "test", cache_in_memory=False)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
-    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
-    test_loader  = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    # Only enable persistent workers when num_workers>0
+    pw = bool(persistent_workers and num_workers > 0)
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=pw,
+        prefetch_factor=prefetch_factor,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=pw,
+        prefetch_factor=prefetch_factor,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=pw,
+        prefetch_factor=prefetch_factor,
+    )
 
     return train_loader, val_loader, test_loader
