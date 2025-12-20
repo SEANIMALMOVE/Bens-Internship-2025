@@ -37,6 +37,8 @@ def get_dataloaders(
 
     # Only enable persistent workers when num_workers>0
     pw = bool(persistent_workers and num_workers > 0)
+    # prefetch_factor is only valid when multiprocessing (num_workers>0) is enabled
+    pf = prefetch_factor if num_workers > 0 else None
 
     train_loader = DataLoader(
         train_ds,
@@ -45,7 +47,7 @@ def get_dataloaders(
         num_workers=num_workers,
         pin_memory=pin_memory,
         persistent_workers=pw,
-        prefetch_factor=prefetch_factor,
+        prefetch_factor=pf,
     )
     val_loader = DataLoader(
         val_ds,
@@ -54,7 +56,7 @@ def get_dataloaders(
         num_workers=num_workers,
         pin_memory=pin_memory,
         persistent_workers=pw,
-        prefetch_factor=prefetch_factor,
+        prefetch_factor=pf,
     )
     test_loader = DataLoader(
         test_ds,
@@ -63,7 +65,7 @@ def get_dataloaders(
         num_workers=num_workers,
         pin_memory=pin_memory,
         persistent_workers=pw,
-        prefetch_factor=prefetch_factor,
+        prefetch_factor=pf,
     )
 
     return train_loader, val_loader, test_loader

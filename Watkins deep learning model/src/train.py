@@ -168,7 +168,8 @@ class Trainer:
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-4)
 
         # LR scheduler based on validation loss
-        self.scheduler = ReduceLROnPlateau(self.optimizer, mode="min", factor=0.5, patience=2, verbose=True)
+        # don't pass `verbose` for compatibility with older PyTorch versions
+        self.scheduler = ReduceLROnPlateau(self.optimizer, mode="min", factor=0.5, patience=2)
 
         # Use AMP when on CUDA for faster training and lower memory
         self.use_amp = True if (str(device).startswith("cuda") and torch.cuda.is_available()) else False
