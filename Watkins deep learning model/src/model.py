@@ -33,8 +33,7 @@ class EfficientNetSpectrogram(nn.Module):
         """
         x shape: [B, 1, H, W]  (mel spectrogram)
         """
-        # Convert 1-channel spectrogram to 3 channels
-        x = x.repeat(1, 3, 1, 1)
+        x = x.repeat(1, 3, 1, 1)  # Makes 3 identical channels so the model can use knowledge from color images
 
         # Forward through EfficientNet
         return self.backbone(x)
@@ -48,32 +47,29 @@ class BaselineCNN(nn.Module):
 
         # Convolutional feature extractor: 16 -> 32 -> 64 -> 128
         self.features = nn.Sequential(
-            nn.Conv2d(input_channels, 16, kernel_size=3, padding=1),
+            nn.Conv2d(input_channels, 16, kernel_size=3, padding=1),   # Looks for simple patterns in the sound-image, like edges or blobs
+            nn.ReLU(inplace=True),                                    # Keeps only strong pattern signals, ignores weak/negative ones
+            nn.MaxPool2d(2),                                          # Shrinks the image, keeping only the most important signals
+
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),              # Looks for more complex patterns, using previous layer's output
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
 
-            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),              # Even more complex pattern detection
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
 
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),             # Final set of pattern detectors
             nn.ReLU(inplace=True),
             # keep spatial resolution and use global pooling afterwards
         )
-        # Global average pooling to get one feature vector per channel
-        self.gap = nn.AdaptiveAvgPool2d((1, 1))
-
-        # Classifier: 128 -> 256 -> num_classes
+        self.gap = nn.AdaptiveAvgPool2d((1, 1))  # Averages each pattern map into a single number (summarizes presence)
         self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(128, 256),
+            nn.Flatten(),                  # Turns the summary numbers into a single list for decision making
+            nn.Linear(128, 256),           # Mixes the pattern summaries to find combinations that matter for each animal
             nn.ReLU(inplace=True),
-            nn.Dropout(0.3),
-            nn.Linear(256, num_classes),
+            nn.Dropout(0.3),               # Randomly ignores some signals during training so the model doesn't become over-reliant
+            nn.Linear(256, num_classes),   # Gives a score for each animal; the highest score is the model's guess
         )
 
     def forward(self, x):
