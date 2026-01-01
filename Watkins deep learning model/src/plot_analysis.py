@@ -19,6 +19,24 @@ def ensure_outdir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
 
 
+def unique_path(p: Path) -> Path:
+    """Return a Path that does not exist by appending an incrementing suffix.
+
+    If `p` does not exist, it is returned unchanged. Otherwise returns
+    `p` with suffix `_1`, `_2`, ... inserted before the file extension.
+    """
+    if not p.exists():
+        return p
+    parent = p.parent
+    stem = p.stem
+    suffix = p.suffix
+    for i in range(1, 10000):
+        candidate = parent / f"{stem}_{i}{suffix}"
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError(f"Could not find unique path for {p}")
+
+
 def plot_learning_curves(hist_paths, labels, outdir: Path):
     ensure_outdir(outdir)
     # Use a seaborn/matplotlib style that's available across versions.
@@ -50,6 +68,7 @@ def plot_learning_curves(hist_paths, labels, outdir: Path):
 
     fig.tight_layout()
     out = outdir / 'learning_curves.png'
+    out = unique_path(out)
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print('Saved', out)
@@ -80,6 +99,7 @@ def plot_precision_recall_from_report(report_path: Path, outdir: Path, top_n: in
 
     fig.tight_layout()
     out = outdir / (report_path.stem + '_precision_recall.png')
+    out = unique_path(out)
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print('Saved', out)
@@ -117,6 +137,7 @@ def plot_strip_predictions(preds_path: Path, test_csv: Path, outdir: Path, top_n
     plt.title('Strip plot of predictions by confidence (true vs false)')
     plt.legend(title='correct')
     out = outdir / (preds_path.stem + '_stripplot.png')
+    out = unique_path(out)
     plt.tight_layout()
     plt.savefig(out, dpi=150)
     plt.close()
@@ -213,6 +234,7 @@ def gallery(preds_path: Path, test_csv: Path, spectrogram_base: Path, outdir: Pa
     fig.suptitle(f'Gallery ({mode}) — {n} samples', fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     out = outdir / f'gallery_{preds_path.stem}_{mode}_{n}.png'
+    out = unique_path(out)
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print('Saved', out)
@@ -221,10 +243,10 @@ def gallery(preds_path: Path, test_csv: Path, spectrogram_base: Path, outdir: Pa
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--base', type=str, default='.', help='base path to model folder')
-    parser.add_argument('--preds', type=str, default='outputs/baseline_preds_20251224_144210.csv')
+    parser.add_argument('--preds', type=str, default='outputs/baseline_preds_v2.csv')
     parser.add_argument('--test', type=str, default='../Bens-Internship-Local/Data/Annotations/test.csv')
-    parser.add_argument('--history', type=str, default='baseline_best_training_history_1.csv')
-    parser.add_argument('--report', type=str, default='outputs/baseline_classification_report_20251224_144210.json')
+    parser.add_argument('--history', type=str, default='baseline_best_training_history_2.csv')
+    parser.add_argument('--report', type=str, default='outputs/baseline_classification_report_v2.json')
     parser.add_argument('--spectrograms', type=str, default='Data/Spectrograms')
     parser.add_argument('--out', type=str, default='outputs/analysis_plots')
     parser.add_argument('--gallery_mode', choices=['random', 'lowest'], default='random')
