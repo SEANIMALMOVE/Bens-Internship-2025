@@ -14,6 +14,9 @@ try:
 except Exception:
     torch = None
 
+# global default verbosity (can be overridden via run_analysis verbose arg)
+VERBOSE = False
+
 
 def ensure_outdir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
@@ -36,8 +39,35 @@ def unique_path(p: Path) -> Path:
             return candidate
     raise FileExistsError(f"Could not find unique path for {p}")
 
+def save_fig_if_not_exists(fig, out: Path, overwrite: bool = True, **save_kwargs):
+    """Save a matplotlib figure to `out`.
 
-def plot_learning_curves(hist_paths, labels, outdir: Path):
+    If `overwrite` is False and `out` exists, the function will close the figure
+    and skip saving. If `overwrite` is True, it will overwrite the file.
+    Returns True if a file was written, False otherwise.
+    """
+    # ensure parent dir exists
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists() and not overwrite:
+        try:
+            plt.close(fig)
+        except Exception:
+            pass
+        if VERBOSE:
+            print(f'SKIP {out.name}')
+        return False
+    try:
+        fig.savefig(out, **save_kwargs)
+        if VERBOSE:
+            print(f'SAVED {out.name}')
+        return True
+    finally:
+        try:
+            plt.close(fig)
+        except Exception:
+            pass
+
+def plot_learning_curves(hist_paths, labels, outdir: Path, overwrite: bool = False):
     ensure_outdir(outdir)
     # Use a seaborn/matplotlib style that's available across versions.
     # Newer matplotlib may not accept 'seaborn-darkgrid', prefer a robust choice.
@@ -68,44 +98,69 @@ def plot_learning_curves(hist_paths, labels, outdir: Path):
 
     fig.tight_layout()
     out = outdir / 'learning_curves.png'
-    out = unique_path(out)
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print('Saved', out)
+    save_fig_if_not_exists(fig, out, overwrite=overwrite, dpi=150)
 
 
-def plot_precision_recall_from_report(report_path: Path, outdir: Path, top_n: int = 20):
+def plot_precision_recall_from_report(report_path: Path, outdir: Path, top_n: int = None, overwrite: bool = False):
     ensure_outdir(outdir)
     with open(report_path, 'r') as fh:
         report = json.load(fh)
 
-    # filter out overall metrics
+    # filter out per-class metrics
     per_class = {k: v for k, v in report.items() if isinstance(v, dict)}
     df = pd.DataFrame(per_class).T
     df['precision'] = df['precision'].astype(float)
     df['recall'] = df['recall'].astype(float)
     df['support'] = df['support'].astype(float)
-    df = df.sort_values('support', ascending=False)
-    df_sel = df.head(top_n).iloc[::-1]
 
-    fig, ax = plt.subplots(1, 2, figsize=(14, max(6, top_n * 0.3 + 2)))
-    df_sel['precision'].plot.barh(ax=ax[0], color='C0')
-    ax[0].set_title('Precision (top by support)')
+    if top_n is None:
+        # show all classes
+        df_sel = df.copy()
+    else:
+        # pick top_n by support as a candidate set
+        df_sel = df.sort_values('support', ascending=False).head(top_n)
+
+    n = len(df_sel)
+    fig, ax = plt.subplots(1, 2, figsize=(14, max(6, n * 0.25 + 2)))
+
+    # Order precision and recall independently, ascending (escalating)
+    s_prec = df_sel['precision'].sort_values(ascending=True)
+    s_rec = df_sel['recall'].sort_values(ascending=True)
+
+    # Ensure the first two entries are 'weighted avg' then 'macro avg' when present
+    def _promote(series, first_names=('weighted avg', 'macro avg')):
+        # case-insensitive matching to preserve original index names
+        idx_map = {i.lower(): i for i in series.index}
+        promoted = []
+        for n in first_names:
+            key = n.lower()
+            if key in idx_map:
+                promoted.append(idx_map[key])
+        if not promoted:
+            return series
+        rest = series.drop(promoted, errors='ignore')
+        # build new series: promoted first in order, then rest (rest already sorted)
+        values = [series.loc[p] for p in promoted] + rest.tolist()
+        index = promoted + rest.index.tolist()
+        return pd.Series(values, index=index)
+
+    s_prec = _promote(s_prec)
+    s_rec = _promote(s_rec)
+
+    s_prec.plot.barh(ax=ax[0], color='C0')
+    ax[0].set_title('Precision (ascending)')
     ax[0].set_xlabel('precision')
 
-    df_sel['recall'].plot.barh(ax=ax[1], color='C1')
-    ax[1].set_title('Recall (top by support)')
+    s_rec.plot.barh(ax=ax[1], color='C1')
+    ax[1].set_title('Recall (ascending)')
     ax[1].set_xlabel('recall')
 
     fig.tight_layout()
     out = outdir / (report_path.stem + '_precision_recall.png')
-    out = unique_path(out)
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print('Saved', out)
+    save_fig_if_not_exists(fig, out, overwrite=overwrite, dpi=150)
 
 
-def plot_strip_predictions(preds_path: Path, test_csv: Path, outdir: Path, top_n_species: int = 12, max_per_species: int = 200):
+def plot_strip_predictions(preds_path: Path, test_csv: Path, outdir: Path, top_n_species: int = None, max_per_species: int = 200, overwrite: bool = False):
     ensure_outdir(outdir)
     preds = pd.read_csv(preds_path)
     test = pd.read_csv(test_csv)
@@ -117,8 +172,14 @@ def plot_strip_predictions(preds_path: Path, test_csv: Path, outdir: Path, top_n
 
     preds['correct'] = preds['y_true_name'] == preds['y_pred_name']
 
-    # choose top species by frequency in test set
-    top_species = test['category'].value_counts().head(top_n_species).index.tolist()
+    # choose species by frequency in test set; show ascending (escalating) by example count
+    counts = test['category'].value_counts()
+    if top_n_species is None:
+        # all species, descending by count (deescalating)
+        top_species = counts.sort_values(ascending=False).index.tolist()
+    else:
+        # pick top_n by support then order them descending for display
+        top_species = counts.sort_values(ascending=False).head(top_n_species).index.tolist()
     df_plot = preds[preds['y_true_name'].isin(top_species)].copy()
 
     # subsample per species to keep plot readable
@@ -130,18 +191,25 @@ def plot_strip_predictions(preds_path: Path, test_csv: Path, outdir: Path, top_n
         df_list.append(sub)
     df_plot = pd.concat(df_list)
 
-    plt.figure(figsize=(12, max(6, len(top_species) * 0.4)))
-    sns.stripplot(x='y_prob_max', y='y_true_name', data=df_plot, hue='correct', dodge=False, alpha=0.6, jitter=0.3, palette={True: 'C2', False: 'C3'})
-    plt.xlabel('predicted probability (max)')
-    plt.ylabel('true species')
-    plt.title('Strip plot of predictions by confidence (true vs false)')
-    plt.legend(title='correct')
+    # create explicit figure/axis so we save the right object
+    fig, ax = plt.subplots(1, 1, figsize=(12, max(6, len(top_species) * 0.35)))
+
+    if df_plot.empty:
+        out = outdir / (preds_path.stem + '_stripplot.png')
+        ax.text(0.5, 0.5, 'no data for strip plot', ha='center', va='center')
+        ax.set_axis_off()
+        fig.tight_layout()
+        save_fig_if_not_exists(fig, out, dpi=150)
+        return
+
+    sns.stripplot(x='y_prob_max', y='y_true_name', data=df_plot, hue='correct', dodge=False, alpha=0.6, jitter=0.3, palette={True: 'C2', False: 'C3'}, ax=ax, order=top_species)
+    ax.set_xlabel('predicted probability (max)')
+    ax.set_ylabel('true species')
+    ax.set_title('Strip plot of predictions by confidence (true vs false)')
+    ax.legend(title='correct')
     out = outdir / (preds_path.stem + '_stripplot.png')
-    out = unique_path(out)
-    plt.tight_layout()
-    plt.savefig(out, dpi=150)
-    plt.close()
-    print('Saved', out)
+    fig.tight_layout()
+    save_fig_if_not_exists(fig, out, overwrite=overwrite, dpi=150)
 
 
 def load_spectrogram_tensor(path: Path):
@@ -185,7 +253,7 @@ def load_spectrogram_tensor(path: Path):
     return arr
 
 
-def gallery(preds_path: Path, test_csv: Path, spectrogram_base: Path, outdir: Path, mode: str = 'random', n: int = 25):
+def gallery(preds_path: Path, test_csv: Path, spectrogram_base: Path, outdir: Path, mode: str = 'random', n: int = 25, overwrite: bool = False):
     ensure_outdir(outdir)
     preds = pd.read_csv(preds_path)
     test = pd.read_csv(test_csv)
@@ -198,7 +266,8 @@ def gallery(preds_path: Path, test_csv: Path, spectrogram_base: Path, outdir: Pa
     if mode == 'lowest':
         sel = preds.nsmallest(n, 'y_prob_max')
     else:
-        sel = preds.sample(n, random_state=42)
+        # use truly random sampling each run (no fixed seed)
+        sel = preds.sample(n)
 
     cols = int(math.ceil(math.sqrt(n)))
     rows = int(math.ceil(n / cols))
@@ -208,15 +277,48 @@ def gallery(preds_path: Path, test_csv: Path, spectrogram_base: Path, outdir: Pa
     for ax in axes[n:]:
         ax.axis('off')
 
+    # Build an index of available spectrogram files to avoid repeated filesystem searches.
+    spec_index = {}
+    try:
+        for p in spectrogram_base.rglob('*.pt'):
+            spec_index.setdefault(p.stem, []).append(p)
+    except Exception:
+        # spectrogram_base may not exist or rglob may fail; leave index empty
+        spec_index = {}
+
     for i, (_, row) in enumerate(sel.iterrows()):
         ax = axes[i]
         filename = row.get('filename')
         true_name = row['y_true_name']
         pred_name = row['y_pred_name']
         prob = row['y_prob_max']
+        # resolve filename stem (handle if filename already has .pt or path parts)
+        if filename is None or (isinstance(filename, float) and np.isnan(filename)):
+            filename = ''
+        stem = Path(str(filename)).stem
 
-        # spectrogram file expected at spectrogram_base/test/<true_name>/<filename>.pt
-        spec_path = spectrogram_base / 'test' / true_name / f'{filename}.pt'
+        # 1) preferred location: spectrogram_base/test/<true_name>/<filename>.pt
+        spec_path = spectrogram_base / 'test' / true_name / f'{stem}.pt'
+        if not spec_path.exists():
+            # 2) fallback: same folder but maybe filename already contained full name
+            alt = spectrogram_base / 'test' / true_name / str(filename)
+            if alt.exists():
+                spec_path = alt
+        if not spec_path.exists():
+            # 3) lookup in indexed files by stem
+            cand = spec_index.get(stem)
+            if cand:
+                spec_path = cand[0]
+        if not spec_path.exists():
+            # 4) try loose match on indexed stems
+            found = None
+            for k, lst in spec_index.items():
+                if stem and (stem in k or k in stem):
+                    found = lst[0]
+                    break
+            if found:
+                spec_path = found
+
         arr = load_spectrogram_tensor(spec_path)
         if arr is None:
             ax.text(0.5, 0.5, 'no spectrogram', ha='center', va='center')
@@ -234,10 +336,243 @@ def gallery(preds_path: Path, test_csv: Path, spectrogram_base: Path, outdir: Pa
     fig.suptitle(f'Gallery ({mode}) — {n} samples', fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     out = outdir / f'gallery_{preds_path.stem}_{mode}_{n}.png'
-    out = unique_path(out)
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print('Saved', out)
+    save_fig_if_not_exists(fig, out, overwrite=overwrite, dpi=150)
+    # If running in a notebook, display the saved image instead of printing text
+    try:
+        from IPython.display import display, Image as IPImage
+        display(IPImage(filename=str(out)))
+    except Exception:
+        # fallback: do nothing
+        pass
+
+
+def _resolve_path(base: Path, p):
+    """Resolve path `p` relative to `base` with a few fallbacks.
+
+    Returns a Path object (may not exist).
+    """
+    p = Path(p) if p is not None else None
+    if p is None:
+        return None
+    if p.exists():
+        return p.resolve()
+    # try relative to base
+    try:
+        cand = (Path(base) / p).resolve()
+        if cand.exists():
+            return cand
+    except Exception:
+        pass
+    # try current working dir
+    cw = Path.cwd()
+    cand = (cw / p).resolve()
+    if cand.exists():
+        return cand
+    # search by name under cwd
+    matches = list(cw.glob('**/' + p.name))
+    if matches:
+        return matches[0].resolve()
+    return p
+
+
+try:
+    from src.model import get_model
+except Exception:
+    try:
+        from model import get_model
+    except Exception:
+        get_model = None
+
+
+def run_inference_and_save(test_loader, classes, device, base: Path, model_name: str, ckpt_path: Path, overwrite_preds: bool = False):
+    """Run inference using `test_loader` and save preds/misclassified files.
+
+    `get_model` must be importable (from src.model or model).
+    """
+    if get_model is None:
+        raise RuntimeError('get_model not available; cannot run inference')
+    out_preds = Path(base) / 'outputs' / 'preds' / model_name / f'{model_name}_preds_v2.csv'
+    out_mis = Path(base) / 'outputs' / 'misclassified' / model_name / f'{model_name}_misclassified_v2.csv'
+    out_preds.parent.mkdir(parents=True, exist_ok=True)
+    out_mis.parent.mkdir(parents=True, exist_ok=True)
+
+    # skip creating preds CSV unless overwrite_preds is True
+    if out_preds.exists() and not overwrite_preds:
+        if VERBOSE:
+            print(f'SKIP inference {model_name}: preds exist ({out_preds.name})')
+        return
+
+    model = get_model(model_name, num_classes=(len(classes) if classes is not None else None), freeze_backbone=False)
+    state = torch.load(str(ckpt_path), map_location=device)
+    model.load_state_dict(state)
+    model.to(device)
+    model.eval()
+
+    y_true_all = []
+    y_pred_all = []
+    y_prob_max_all = []
+
+    with torch.no_grad():
+        for xb, yb in test_loader:
+            xb = xb.to(device)
+            logits = model(xb)
+            probs = torch.nn.functional.softmax(logits, dim=1).cpu()
+            preds = probs.argmax(dim=1).cpu().numpy()
+            y_true_all.extend(yb.numpy().tolist())
+            y_pred_all.extend(preds.tolist())
+            y_prob_max_all.extend(probs.max(dim=1).values.numpy().tolist())
+
+    import pandas as pd
+    df_pred = pd.DataFrame({'y_true': y_true_all, 'y_pred': y_pred_all, 'y_prob_max': y_prob_max_all})
+    if classes is not None:
+        df_pred['y_true_name'] = df_pred['y_true'].apply(lambda x: classes[x])
+        df_pred['y_pred_name'] = df_pred['y_pred'].apply(lambda x: classes[x])
+
+    df_pred.to_csv(out_preds, index=False)
+    if VERBOSE:
+        print(f'SAVED {out_preds.name}')
+
+    mis = df_pred[df_pred['y_true'] != df_pred['y_pred']]
+    mis.to_csv(out_mis, index=False)
+    if VERBOSE:
+        print(f'SAVED {out_mis.name}')
+
+
+def run_inference_for_models(test_loader, classes, device, base: Path = Path('.'), model_names=None, overwrite_preds: bool = False):
+    if model_names is None:
+        model_names = ['baseline', 'efficientnet']
+    for model_name in model_names:
+        ckpt_name = f'{model_name}_best_2.pth'
+        # try base first then glob
+        p = Path(base) / ckpt_name
+        if not p.exists():
+            candidates = list(Path(base).glob(f'**/{ckpt_name.replace("_2","*")}'))
+            if candidates:
+                candidates.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                p = candidates[0]
+        if not p.exists():
+            if VERBOSE:
+                print(f'NO CKPT for {model_name} ({ckpt_name})')
+            continue
+        if VERBOSE:
+            print('Using checkpoint:', p.name)
+        run_inference_and_save(test_loader, classes, device, base, model_name, p, overwrite_preds=overwrite_preds)
+
+
+def run_analysis(base: Path = Path('.'), history=None, report=None, preds=None, test_csv=None, spectrograms=None, out: str = 'outputs/analysis_plots', test_loader=None, classes=None, device='cpu', overwrite_plots: bool = True, overwrite_preds: bool = False, run_inference_flag: bool = False, gallery_mode: str = 'lowest', gallery_n: int = 25):
+    """High-level function to run plotting + optional inference with simple defaults.
+
+    - `base` is the repository root path.
+    - If `run_inference_flag` is True, `test_loader` and `classes` must be provided.
+    - `overwrite` controls whether generated plot files are overwritten.
+    """
+    base = Path(base).resolve()
+    # prefer the legacy flat outputs/ files if present, fall back to organized subfolders
+    hist_primary = base / 'outputs' / 'baseline_best_training_history_2.csv'
+    hist_secondary = base / 'outputs' / 'histories' / 'baseline_best_training_history_2.csv'
+    HISTORY = _resolve_path(base, history or hist_primary)
+    if (HISTORY is None) or (not HISTORY.exists()):
+        HISTORY = _resolve_path(base, hist_secondary)
+
+    report_primary = base / 'outputs' / 'baseline_classification_report_v2.json'
+    report_secondary = base / 'outputs' / 'reports' / 'baseline_classification_report_v2.json'
+    REPORT = _resolve_path(base, report or report_primary)
+    if (REPORT is None) or (not REPORT.exists()):
+        REPORT = _resolve_path(base, report_secondary)
+
+    preds_primary = base / 'outputs' / 'baseline_preds_v2.csv'
+    preds_secondary = base / 'outputs' / 'preds' / 'baseline' / 'baseline_preds_v2.csv'
+    PREDS = _resolve_path(base, preds or preds_primary)
+    if (PREDS is None) or (not PREDS.exists()):
+        PREDS = _resolve_path(base, preds_secondary)
+    # default: Bens-Internship-Local is a sibling of the workspace root (two levels up from model folder)
+    TEST_CSV = _resolve_path(base, test_csv or (base.parent.parent / 'Bens-Internship-Local' / 'Data' / 'Annotations' / 'test.csv'))
+    SPECTROGRAMS = _resolve_path(base, spectrograms or (base / 'Data' / 'Spectrograms'))
+
+    # Print resolved paths for debugging
+    print('Resolved paths:')
+    print('  base ->', base)
+    print('  PREDS ->', PREDS, 'exists=' + str(PREDS.exists()))
+    print('  TEST_CSV ->', TEST_CSV, 'exists=' + str(TEST_CSV.exists() if TEST_CSV is not None else False))
+    print('  SPECTROGRAMS ->', SPECTROGRAMS, 'exists=' + str(SPECTROGRAMS.exists() if SPECTROGRAMS is not None else False))
+
+    # Additional fallbacks: look for files under the workspace or sibling folders
+    # Try sibling workspace 'Bens-Internship-Local' one level up from repository root
+    try:
+        if TEST_CSV is None or not TEST_CSV.exists():
+            alt = (base.parent.parent / 'Bens-Internship-Local' / 'Data' / 'Annotations' / 'test.csv')
+            if alt.exists():
+                TEST_CSV = alt.resolve()
+    except Exception:
+        pass
+
+    # Glob search for test.csv if still missing (search current working dir)
+    if TEST_CSV is None or not TEST_CSV.exists():
+        matches = list(Path.cwd().glob('**/test.csv'))
+        for m in matches:
+            # prefer ones under Bens-Internship-Local or Data/Annotations
+            if 'Bens-Internship-Local' in str(m) or 'Annotations' in str(m):
+                TEST_CSV = m.resolve()
+                break
+        if (TEST_CSV is None or not TEST_CSV.exists()) and matches:
+            TEST_CSV = matches[0].resolve()
+
+    # For spectrograms, prefer Bens-Internship-Local Data/Spectrograms if present
+    try:
+        if SPECTROGRAMS is None or not SPECTROGRAMS.exists():
+            alt = base.parent.parent / 'Bens-Internship-Local' / 'Data' / 'Spectrograms'
+            if alt.exists():
+                SPECTROGRAMS = alt.resolve()
+    except Exception:
+        pass
+
+    if SPECTROGRAMS is None or not SPECTROGRAMS.exists():
+        # try searching cwd for a 'Spectrograms' folder
+        matches = list(Path.cwd().glob('**/Spectrograms'))
+        if matches:
+            SPECTROGRAMS = matches[0].resolve()
+    OUT = Path(base) / out
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    # if requested, remove existing image files so we always create fresh pictures
+    if overwrite_plots:
+        exts = ('*.png', '*.jpg', '*.jpeg', '*.svg', '*.pdf')
+        for pat in exts:
+            for f in OUT.glob(pat):
+                try:
+                    f.unlink()
+                    if VERBOSE:
+                        print(f'DELETE {f.name}')
+                except Exception:
+                    pass
+
+    # optional inference
+    if run_inference_flag:
+        if test_loader is None:
+            print('run_inference_flag set but no test_loader provided; skipping inference')
+        else:
+            run_inference_for_models(test_loader, classes, device, base=base, overwrite_preds=overwrite_preds)
+
+    # plots
+    if HISTORY and HISTORY.exists():
+        plot_learning_curves([HISTORY], ['baseline'], OUT, overwrite=overwrite_plots)
+    else:
+        print('History file not found:', HISTORY)
+
+    if REPORT and REPORT.exists():
+        plot_precision_recall_from_report(REPORT, OUT, overwrite=overwrite_plots)
+    else:
+        print('Report file not found:', REPORT)
+
+    if PREDS and PREDS.exists() and TEST_CSV and TEST_CSV.exists():
+        plot_strip_predictions(PREDS, TEST_CSV, OUT, overwrite=overwrite_plots)
+    else:
+        print('Preds or test CSV not found:', PREDS, TEST_CSV)
+
+    if PREDS and PREDS.exists() and TEST_CSV and TEST_CSV.exists() and SPECTROGRAMS and SPECTROGRAMS.exists():
+        gallery(PREDS, TEST_CSV, SPECTROGRAMS, OUT, mode=gallery_mode, n=gallery_n, overwrite=overwrite_plots)
+    else:
+        print('Gallery skipped; missing preds/test/spectrograms')
 
 
 def main():
@@ -245,7 +580,7 @@ def main():
     parser.add_argument('--base', type=str, default='.', help='base path to model folder')
     parser.add_argument('--preds', type=str, default='outputs/baseline_preds_v2.csv')
     parser.add_argument('--test', type=str, default='../Bens-Internship-Local/Data/Annotations/test.csv')
-    parser.add_argument('--history', type=str, default='baseline_best_training_history_2.csv')
+    parser.add_argument('--history', type=str, default='outputs/baseline_best_training_history_2.csv')
     parser.add_argument('--report', type=str, default='outputs/baseline_classification_report_v2.json')
     parser.add_argument('--spectrograms', type=str, default='Data/Spectrograms')
     parser.add_argument('--out', type=str, default='outputs/analysis_plots')
