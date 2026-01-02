@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This project investigates the application of deep learning models for audio classification using mel-spectrogram representations. The primary objective is to compare a custom baseline Convolutional Neural Network (CNN) with a transfer learning–based EfficientNet model, evaluating their performance on a multiclass audio classification task.
+This project investigates the application of deep learning models for audio classification using mel-spectrogram representations. The primary objective is to compare a custom baseline Convolutional Neural Network (CNN) with a transfer learning–based EfficientNet model, evaluating their performance on a multiclass audio classification task. We were working with 44 different species classes.
 
 After dividing into test/train/val, audio signals are then converted into spectrogram tensors and stored as .pt files. These spectrograms are then used as image-like inputs for convolutional neural networks. The project focuses on model design, training stability, and rigorous evaluation using standard classification metrics.
 
@@ -21,6 +21,11 @@ This project explores:
 - Data/Annotations: annotations file (Audio and Spectrogram files are kept here locally)
 - notebooks: Main codelines where I run the project in the Main notebook
 - outputs: results after evaluation
+    - analysis_plots: evaluation charts and results
+    - histories: all previous training histories (for each version)
+    - missclassified: missclassified classes
+    - preds: all predictions and actual values. Confidience of predictions
+    - reports: precision, recall, f1-score for each class (44 classes)
 
 ## Models Implemented
 ### Baseline CNN
