@@ -42,8 +42,8 @@ This project explores:
 - Significantly higher performance compared to the baseline model
 
 ## Dataset and Preprocessing
--Input data consists of mel-spectrograms saved as PyTorch tensors
--Directory structure:
+- Input data consists of mel-spectrograms saved as PyTorch tensors
+- Directory structure:
 
 Spectrograms/
   train/
@@ -51,8 +51,8 @@ Spectrograms/
   test/
 
 
--All spectrograms are padded or cropped to a fixed width for batch consistency
--Offline normalization is applied
+- All spectrograms are padded or cropped to a fixed width for batch consistency
+- Offline normalization is applied
 
 ## Training Setup
 - Loss function: CrossEntropyLoss with class balancing
