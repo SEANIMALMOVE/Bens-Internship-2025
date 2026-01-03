@@ -1,3 +1,16 @@
+def save_gallery_baseline_lowest_25():
+    """
+    Create and save gallery_baseline_preds_v2_lowest_25.png in the analysis_plots folder.
+    """
+    # Use project root as base (parent of src)
+    base = Path(__file__).resolve().parent.parent
+    outdir = base / 'outputs' / 'analysis_plots'
+    preds_path = base / 'outputs' / 'preds' / 'baseline' / 'baseline_preds_v2.csv'
+    test_csv = base / 'Data' / 'Annotations' / 'test.csv'
+    spectrogram_base = base / 'Data' / 'Spectrograms'
+    outdir.mkdir(parents=True, exist_ok=True)
+    gallery(preds_path, test_csv, spectrogram_base, outdir, mode='lowest', n=25, overwrite=True)
+
 import argparse
 import json
 import math
@@ -48,14 +61,7 @@ def save_fig_if_not_exists(fig, out: Path, overwrite: bool = True, **save_kwargs
     """
     # ensure parent dir exists
     out.parent.mkdir(parents=True, exist_ok=True)
-    if out.exists() and not overwrite:
-        try:
-            plt.close(fig)
-        except Exception:
-            pass
-        if VERBOSE:
-            print(f'SKIP {out.name}')
-        return False
+    # Always save/overwrite the file (no skipping)
     try:
         fig.savefig(out, **save_kwargs)
         if VERBOSE:
@@ -67,7 +73,7 @@ def save_fig_if_not_exists(fig, out: Path, overwrite: bool = True, **save_kwargs
         except Exception:
             pass
 
-def plot_learning_curves(hist_paths, labels, outdir: Path, overwrite: bool = False):
+def plot_learning_curves(hist_paths, labels, outdir: Path, overwrite: bool = False, mode: str = 'side_by_side'):
     ensure_outdir(outdir)
     # Use a seaborn/matplotlib style that's available across versions.
     # Newer matplotlib may not accept 'seaborn-darkgrid', prefer a robust choice.
@@ -78,27 +84,53 @@ def plot_learning_curves(hist_paths, labels, outdir: Path, overwrite: bool = Fal
             plt.style.use('seaborn-darkgrid')
         except Exception:
             plt.style.use('seaborn')
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    for p, label in zip(hist_paths, labels):
-        df = pd.read_csv(p)
-        axes[0].plot(df['epoch'], df['train_acc'], label=f'{label} train')
-        axes[0].plot(df['epoch'], df['val_acc'], '--', label=f'{label} val')
-        axes[1].plot(df['epoch'], df['train_loss'], label=f'{label} train')
-        axes[1].plot(df['epoch'], df['val_loss'], '--', label=f'{label} val')
-
-    axes[0].set_xlabel('epoch')
-    axes[0].set_ylabel('accuracy (%)')
-    axes[0].legend()
-    axes[0].set_title('Accuracy Learning Curve')
-
-    axes[1].set_xlabel('epoch')
-    axes[1].set_ylabel('loss')
-    axes[1].legend()
-    axes[1].set_title('Loss Learning Curve')
-
-    fig.tight_layout()
-    out = outdir / 'learning_curves.png'
-    save_fig_if_not_exists(fig, out, overwrite=overwrite, dpi=150)
+    if mode == 'side_by_side' and len(hist_paths) > 1:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        for p, label in zip(hist_paths, labels):
+            df = pd.read_csv(p)
+            acc_train_col = 'train_acc' if 'train_acc' in df.columns else 'train_accuracy'
+            acc_val_col = 'val_acc' if 'val_acc' in df.columns else 'val_accuracy'
+            loss_train_col = 'train_loss'
+            loss_val_col = 'val_loss'
+            axes[0].plot(df['epoch'], df[acc_train_col], label=f'{label} train')
+            axes[0].plot(df['epoch'], df[acc_val_col], '--', label=f'{label} val')
+            axes[1].plot(df['epoch'], df[loss_train_col], label=f'{label} train')
+            axes[1].plot(df['epoch'], df[loss_val_col], '--', label=f'{label} val')
+        axes[0].set_xlabel('epoch')
+        axes[0].set_ylabel('accuracy (%)')
+        axes[0].legend()
+        axes[0].set_title('Accuracy Learning Curve')
+        axes[1].set_xlabel('epoch')
+        axes[1].set_ylabel('loss')
+        axes[1].legend()
+        axes[1].set_title('Loss Learning Curve')
+        fig.tight_layout()
+        out = outdir / 'learning_curves_baseline_efficientnet.png'
+        save_fig_if_not_exists(fig, out, overwrite=overwrite, dpi=150)
+    else:
+        # Plot each individually
+        for p, label in zip(hist_paths, labels):
+            df = pd.read_csv(p)
+            acc_train_col = 'train_acc' if 'train_acc' in df.columns else 'train_accuracy'
+            acc_val_col = 'val_acc' if 'val_acc' in df.columns else 'val_accuracy'
+            loss_train_col = 'train_loss'
+            loss_val_col = 'val_loss'
+            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+            axes[0].plot(df['epoch'], df[acc_train_col], label='Train', marker='o')
+            axes[0].plot(df['epoch'], df[acc_val_col], '--', label='Validation', marker='o')
+            axes[0].set_xlabel('epoch')
+            axes[0].set_ylabel('accuracy (%)')
+            axes[0].legend()
+            axes[0].set_title(f'{label} Accuracy Learning Curve')
+            axes[1].plot(df['epoch'], df[loss_train_col], label='Train', marker='o')
+            axes[1].plot(df['epoch'], df[loss_val_col], '--', label='Validation', marker='o')
+            axes[1].set_xlabel('epoch')
+            axes[1].set_ylabel('loss')
+            axes[1].legend()
+            axes[1].set_title(f'{label} Loss Learning Curve')
+            fig.tight_layout()
+            out = outdir / f'learning_curves_{label.lower()}.png'
+            save_fig_if_not_exists(fig, out, overwrite=overwrite, dpi=150)
 
 
 def plot_precision_recall_from_report(report_path: Path, outdir: Path, top_n: int = None, overwrite: bool = False):
@@ -257,6 +289,7 @@ def gallery(preds_path: Path, test_csv: Path, spectrogram_base: Path, outdir: Pa
     ensure_outdir(outdir)
     preds = pd.read_csv(preds_path)
     test = pd.read_csv(test_csv)
+
     if len(preds) == len(test):
         preds = preds.copy()
         preds['filename'] = test['filename'].values
@@ -286,6 +319,7 @@ def gallery(preds_path: Path, test_csv: Path, spectrogram_base: Path, outdir: Pa
         # spectrogram_base may not exist or rglob may fail; leave index empty
         spec_index = {}
 
+    found_count = 0
     for i, (_, row) in enumerate(sel.iterrows()):
         ax = axes[i]
         filename = row.get('filename')
@@ -324,6 +358,8 @@ def gallery(preds_path: Path, test_csv: Path, spectrogram_base: Path, outdir: Pa
             ax.text(0.5, 0.5, 'no spectrogram', ha='center', va='center')
             ax.set_axis_off()
             continue
+
+
 
         # plot
         ax.imshow(arr, aspect='auto', origin='lower', cmap='magma')
@@ -468,11 +504,13 @@ def run_analysis(base: Path = Path('.'), history=None, report=None, preds=None, 
     """
     base = Path(base).resolve()
     # prefer the legacy flat outputs/ files if present, fall back to organized subfolders
-    hist_primary = base / 'outputs' / 'baseline_best_training_history_2.csv'
-    hist_secondary = base / 'outputs' / 'histories' / 'baseline_best_training_history_2.csv'
-    HISTORY = _resolve_path(base, history or hist_primary)
-    if (HISTORY is None) or (not HISTORY.exists()):
-        HISTORY = _resolve_path(base, hist_secondary)
+    hist_baseline_primary = base / 'outputs' / 'baseline_best_training_history_2.csv'
+    hist_baseline_secondary = base / 'outputs' / 'histories' / 'baseline_best_training_history_2.csv'
+    hist_effnet_primary = base / 'outputs' / 'histories' / 'efficientnet_best_training_history_2.csv'
+    HISTORY_BASELINE = _resolve_path(base, hist_baseline_primary)
+    if (HISTORY_BASELINE is None) or (not HISTORY_BASELINE.exists()):
+        HISTORY_BASELINE = _resolve_path(base, hist_baseline_secondary)
+    HISTORY_EFFNET = _resolve_path(base, hist_effnet_primary)
 
     report_primary = base / 'outputs' / 'baseline_classification_report_v2.json'
     report_secondary = base / 'outputs' / 'reports' / 'baseline_classification_report_v2.json'
@@ -489,12 +527,7 @@ def run_analysis(base: Path = Path('.'), history=None, report=None, preds=None, 
     TEST_CSV = _resolve_path(base, test_csv or (base.parent.parent / 'Bens-Internship-Local' / 'Data' / 'Annotations' / 'test.csv'))
     SPECTROGRAMS = _resolve_path(base, spectrograms or (base / 'Data' / 'Spectrograms'))
 
-    # Print resolved paths for debugging
-    print('Resolved paths:')
-    print('  base ->', base)
-    print('  PREDS ->', PREDS, 'exists=' + str(PREDS.exists()))
-    print('  TEST_CSV ->', TEST_CSV, 'exists=' + str(TEST_CSV.exists() if TEST_CSV is not None else False))
-    print('  SPECTROGRAMS ->', SPECTROGRAMS, 'exists=' + str(SPECTROGRAMS.exists() if SPECTROGRAMS is not None else False))
+
 
     # Additional fallbacks: look for files under the workspace or sibling folders
     # Try sibling workspace 'Bens-Internship-Local' one level up from repository root
@@ -534,8 +567,9 @@ def run_analysis(base: Path = Path('.'), history=None, report=None, preds=None, 
     OUT = Path(base) / out
     OUT.mkdir(parents=True, exist_ok=True)
 
-    # if requested, remove existing image files so we always create fresh pictures
-    if overwrite_plots:
+    # Only delete old files if explicitly requested (e.g., via a new argument)
+    clean_analysis_plots = getattr(run_analysis, "clean_analysis_plots", False)
+    if clean_analysis_plots:
         exts = ('*.png', '*.jpg', '*.jpeg', '*.svg', '*.pdf')
         for pat in exts:
             for f in OUT.glob(pat):
@@ -554,10 +588,24 @@ def run_analysis(base: Path = Path('.'), history=None, report=None, preds=None, 
             run_inference_for_models(test_loader, classes, device, base=base, overwrite_preds=overwrite_preds)
 
     # plots
-    if HISTORY and HISTORY.exists():
-        plot_learning_curves([HISTORY], ['baseline'], OUT, overwrite=overwrite_plots)
+    # Plot both baseline and EfficientNet learning curves if available
+    hist_paths = []
+    labels = []
+    if HISTORY_BASELINE and HISTORY_BASELINE.exists():
+        hist_paths.append(HISTORY_BASELINE)
+        labels.append('Baseline')
+    if HISTORY_EFFNET and HISTORY_EFFNET.exists():
+        hist_paths.append(HISTORY_EFFNET)
+        labels.append('EfficientNet')
+    if hist_paths:
+        # Plot side by side if both, and also individually
+        if len(hist_paths) > 1:
+            plot_learning_curves(hist_paths, labels, OUT, overwrite=overwrite_plots, mode='side_by_side')
+            plot_learning_curves(hist_paths, labels, OUT, overwrite=overwrite_plots, mode='individual')
+        else:
+            plot_learning_curves(hist_paths, labels, OUT, overwrite=overwrite_plots, mode='individual')
     else:
-        print('History file not found:', HISTORY)
+        print('No history files found for learning curves.')
 
     if REPORT and REPORT.exists():
         plot_precision_recall_from_report(REPORT, OUT, overwrite=overwrite_plots)
@@ -576,6 +624,9 @@ def run_analysis(base: Path = Path('.'), history=None, report=None, preds=None, 
 
 
 def main():
+        # To create gallery_baseline_preds_v2_lowest_25.png in analysis_plots folder, uncomment below:
+        # save_gallery_baseline_lowest_25()
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--base', type=str, default='.', help='base path to model folder')
     parser.add_argument('--preds', type=str, default='outputs/baseline_preds_v2.csv')
@@ -590,6 +641,18 @@ def main():
 
     base = Path(args.base)
     outdir = base / args.out
+    # Clear out all files in analysis_plots at the start of the run
+    outdir.mkdir(parents=True, exist_ok=True)
+    exts = ('*.png', '*.jpg', '*.jpeg', '*.svg', '*.pdf')
+    for pat in exts:
+        for f in outdir.glob(pat):
+            try:
+                f.unlink()
+                if VERBOSE:
+                    print(f'DELETE {f.name}')
+            except Exception:
+                pass
+
     hist_path = base / args.history
     report_path = base / args.report
     preds_path = base / args.preds
@@ -614,12 +677,17 @@ def main():
     else:
         print('preds or test csv not found')
 
-    # gallery
+    # gallery (random)
     if preds_path.exists() and test_csv.exists():
-        gallery(preds_path, test_csv, spectrogram_base, outdir, mode=args.gallery_mode, n=args.gallery_n)
+        gallery(preds_path, test_csv, spectrogram_base, outdir, mode='random', n=args.gallery_n)
+        # gallery (lowest)
+        gallery(preds_path, test_csv, spectrogram_base, outdir, mode='lowest', n=args.gallery_n)
     else:
         print('gallery skipped: preds/test missing')
 
 
 if __name__ == '__main__':
     main()
+
+
+
