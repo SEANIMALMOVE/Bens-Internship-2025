@@ -19,7 +19,9 @@ This project explores:
 - Watkins deep learning model -> main folder
 - src folder within main folder: python codes
 - Data/Annotations: annotations file (Audio and Spectrogram files are kept here locally)
-- notebooks: Main codelines where I run the project in the Main notebook
+- notebooks: 
+  - Main codelines where I run the project in the Main notebook
+  - Report notebook: Project description, summary and report
 - outputs: results after evaluation
     - analysis_plots: evaluation charts and results
     - histories: all previous training histories (for each version)

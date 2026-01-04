@@ -22,6 +22,10 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+import os
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+
 try:
     import torch
 except Exception:
@@ -494,6 +498,102 @@ def run_inference_for_models(test_loader, classes, device, base: Path = Path('.'
             print('Using checkpoint:', p.name)
         run_inference_and_save(test_loader, classes, device, base, model_name, p, overwrite_preds=overwrite_preds)
 
+def save_confusion_matrix(y_true, y_pred, class_names, out_dir="outputs/analysis_plots", filename="confusion_matrix.png"):
+    """
+    Plots and saves the confusion matrix for all classes.
+    Args:
+        y_true: List or array of true labels (integers or strings).
+        y_pred: List or array of predicted labels (same type as y_true).
+        class_names: List of all 44 class names, in order.
+        out_dir: Directory to save the plot.
+        filename: Name of the output image file.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    cm = confusion_matrix(y_true, y_pred, labels=range(len(class_names)))
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    fig, ax = plt.subplots(figsize=(18, 18))
+    disp.plot(ax=ax, cmap="Blues", xticks_rotation=90, colorbar=True)
+    plt.title("Confusion Matrix (All 44 Classes)")
+    plt.tight_layout()
+    out_path = os.path.join(out_dir, filename)
+    plt.savefig(out_path, dpi=200)
+    plt.close(fig)
+    print(f"Confusion matrix saved to {out_path}")
+
+
+def create_confusion_from_preds(preds_path: Path, test_csv: Path = None, class_names=None, out_dir: str = "outputs/analysis_plots", filename: str = "confusion_matrix_all_44.png"):
+    """Convenience wrapper: load predictions file, infer labels, and save full confusion matrix.
+
+    Args:
+        preds_path: Path to predictions CSV. Expected columns: one of
+            - 'y_true' and 'y_pred' (integer class indices),
+            - 'y_true_name' and 'y_pred_name' (string class names), or
+            - 'true_label' and 'predicted_label' (string names used in some notebooks).
+        test_csv: optional Path to test.csv containing a 'category' column listing class names.
+        class_names: optional list of class names (preferred). If omitted, will be inferred from
+            preds or from `test_csv` if available.
+        out_dir: output directory for saved image.
+        filename: output filename.
+    """
+    preds_path = Path(preds_path)
+    if not preds_path.exists():
+        raise FileNotFoundError(f"Predictions file not found: {preds_path}")
+
+    df = pd.read_csv(preds_path)
+
+    # Determine whether preds contain numeric indices or names
+    if 'y_true' in df.columns and 'y_pred' in df.columns:
+        y_true = df['y_true'].astype(int).tolist()
+        y_pred = df['y_pred'].astype(int).tolist()
+        # need class_names to map indices -> labels for display
+        if class_names is None:
+            if test_csv is not None and Path(test_csv).exists():
+                test_df = pd.read_csv(test_csv)
+                if 'category' in test_df.columns:
+                    class_names = sorted(test_df['category'].unique())
+            else:
+                raise ValueError('class_names required when preds use numeric indices')
+    else:
+        # try name-based columns
+        if 'y_true_name' in df.columns and 'y_pred_name' in df.columns:
+            y_true_names = df['y_true_name'].astype(str).tolist()
+            y_pred_names = df['y_pred_name'].astype(str).tolist()
+        elif 'true_label' in df.columns and 'predicted_label' in df.columns:
+            y_true_names = df['true_label'].astype(str).tolist()
+            y_pred_names = df['predicted_label'].astype(str).tolist()
+        else:
+            # fallback: try first two columns
+            cols = list(df.columns)
+            if len(cols) >= 2:
+                y_true_names = df[cols[0]].astype(str).tolist()
+                y_pred_names = df[cols[1]].astype(str).tolist()
+            else:
+                raise ValueError('Could not find suitable prediction columns in preds file')
+
+        # derive class_names if not provided
+        if class_names is None:
+            if test_csv is not None and Path(test_csv).exists():
+                test_df = pd.read_csv(test_csv)
+                if 'category' in test_df.columns:
+                    class_names = sorted(test_df['category'].unique())
+            else:
+                # use union of names found (sorted for deterministic order)
+                class_names = sorted(set(y_true_names) | set(y_pred_names))
+
+        # build mapping name -> index
+        name_to_idx = {n: i for i, n in enumerate(class_names)}
+        # map names to indices, use -1 for unknown entries
+        y_true = [name_to_idx.get(n, -1) for n in y_true_names]
+        y_pred = [name_to_idx.get(n, -1) for n in y_pred_names]
+
+    # filter out any unknown labels mapped to -1
+    paired = [(t, p) for t, p in zip(y_true, y_pred) if t >= 0 and p >= 0]
+    if not paired:
+        raise ValueError('No valid prediction pairs found after mapping labels')
+    y_true_f, y_pred_f = zip(*paired)
+
+    # call the core saver
+    save_confusion_matrix(list(y_true_f), list(y_pred_f), class_names, out_dir=out_dir, filename=filename)
 
 def run_analysis(base: Path = Path('.'), history=None, report=None, preds=None, test_csv=None, spectrograms=None, out: str = 'outputs/analysis_plots', test_loader=None, classes=None, device='cpu', overwrite_plots: bool = True, overwrite_preds: bool = False, run_inference_flag: bool = False, gallery_mode: str = 'lowest', gallery_n: int = 25):
     """High-level function to run plotting + optional inference with simple defaults.
