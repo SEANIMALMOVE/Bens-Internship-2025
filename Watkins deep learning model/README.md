@@ -1,91 +1,80 @@
-# First Deep Learning model: Audio Classification Using CNN and Transfer 
+# First Deep Learning model: Audio Classification Using CNN and Transfer
 
 ## Project Overview
 
-This project investigates the application of deep learning models for audio classification using mel-spectrogram representations. The primary objective is to compare a custom baseline Convolutional Neural Network (CNN) with a transfer learning–based EfficientNet model, evaluating their performance on a multiclass audio classification task. We were working with 44 different species classes.
-
-After dividing into test/train/val, audio signals are then converted into spectrogram tensors and stored as .pt files. These spectrograms are then used as image-like inputs for convolutional neural networks. The project focuses on model design, training stability, and rigorous evaluation using standard classification metrics.
+This project evaluates spectrogram-based convolutional neural networks for multiclass audio classification on the Watkins Marine Mammals dataset (44 species, 15,407 recordings). Audio recordings are converted to mel-spectrogram tensors (.pt), then used as image-like inputs for CNNs. We compare a compact Baseline CNN trained from scratch with a transfer-learning model based on EfficientNet‑B0.
 
 ## Motivation
 
-Audio classification problems often suffer from limited labeled data and high variability in acoustic patterns. While custom CNNs can learn task-specific features, they may struggle to generalize. Transfer learning offers a powerful alternative by leveraging pretrained visual feature extractors, even when applied to non-visual domains such as audio spectrograms.
+Audio spectrograms can be treated as images and benefit from pretrained visual feature extractors. This project studies whether transfer learning (EfficientNet‑B0) improves generalization compared to a small custom CNN, and inspects model behaviour beyond accuracy using precision, recall and qualitative plots.
 
-This project explores:
-- Whether a simple baseline CNN is sufficient for the task
-- How much performance gain can be achieved using a pretrained EfficientNet
-- How evaluation metrics beyond accuracy reveal differences in model behavior
+## Repository Structure
+- PROJECT SHOWCASE IN src/Report.ipynb
+- src/: training, model, dataloader and evaluation code.
+- Data/: original audio and generated spectrograms.
+  - Data/Annotations: audio_annotations.csv, train.csv, val.csv, test.csv.
+  - Data/Spectrograms: train/, val/, test/ class folders containing .pt files.
+  - notebooks/: Main.ipynb, Testing.ipynb, Report.ipynb, and exploration notebooks.
+- outputs/:
+  - analysis_plots/: gallery images, learning curves, stripplots.
+  - histories/: saved training histories.
+  - preds/, misclassified/, reports/: CSVs and JSON classification reports.
+  - model checkpoints: baseline_best_2.pth, efficientnet_best_2.pth.
 
-## Folder Structure
-- Watkins deep learning model -> main folder
-- src folder within main folder: python codes
-- Data/Annotations: annotations file (Audio and Spectrogram files are kept here locally)
-- notebooks: 
-  - Main codelines where I run the project in the Main notebook
-  - Report notebook: Project description, summary and report
-- outputs: results after evaluation
-    - analysis_plots: evaluation charts and results
-    - histories: all previous training histories (for each version)
-    - missclassified: missclassified classes
-    - preds: all predictions and actual values. Confidience of predictions
-    - reports: precision, recall, f1-score for each class (44 classes)
+## Data & Preprocessing
+- Dataset: 44 species, 15,407 recordings.
+- Split: 70% train (10,784), 15% val (2,311), 15% test (2,312).
+- Spectrograms saved as .pt files; each sample is converted to channel-first, padded/cropped to a fixed width (400 time frames), and normalized with per-sample standardization (offline).
 
-## Models Implemented
-### Baseline CNN
-- Custom-designed convolutional network
-- Four convolutional blocks with ReLU and max pooling
-- Global Average Pooling to reduce overfitting
-- Fully connected classifier head
-- Trained from scratch on spectrogram data
+### Models
+- Baseline CNN: small conv stack (16→32→64→128) + global average pooling + classifier head; trained from scratch.
+- EfficientNet‑B0: ImageNet-pretrained backbone adapted by repeating single-channel spectrograms to 3 channels and replacing the final linear layer. Backbone can be frozen/unfrozen for fine-tuning.
 
-### EfficientNet-B0 (Transfer Learning)
-- Pretrained on ImageNet
-- Adapted for single-channel spectrogram input by channel replication
-- Fine-tuned on the target dataset
-- Significantly higher performance compared to the baseline model
+## Training
+- Loss: CrossEntropyLoss with per-class weights to mitigate imbalance.
+- Optimizer: AdamW, ReduceLROnPlateau scheduler.
+- Early stopping on validation loss.
+- Automatic Mixed Precision (AMP) supported on GPU.
+- Typical runs: both models trained for up to 10 epochs.
+  - Baseline: ≈3 min / epoch (+ ~20 s evaluation).
+  - EfficientNet: ≈17 min / epoch (+ ~1 min evaluation).
+  - End‑to‑end experiments took a couple of hours.
 
-## Dataset and Preprocessing
-- Input data consists of mel-spectrograms saved as PyTorch tensors
-- Directory structure:
+## Evaluation & Visualizations
+- Quantitative: accuracy, training/validation loss, per-class precision and recall (weighted and macro). Numeric reports live in outputs/reports/.
+- Qualitative:
+  - Galleries: 25 lowest-confidence predictions (to inspect ambiguous/misclassified samples) and 25 random samples.
+  - Learning curves: side-by-side accuracy and loss for both models.
+  - Stripplots: per-sample prediction confidences (green = correct, red = incorrect).
+  - Misclassification analysis and per-class confusion patterns available in notebooks/Main.ipynb and notebooks/Testing.ipynb.
 
-Spectrograms/
-  train/
-  val/
-  test/
+## Key Findings
+- EfficientNet converged to substantially higher validation accuracy and lower validation loss than the Baseline CNN under the chosen hyperparameters.
+- Transfer learning produced steadier learning dynamics and improved precision/recall for most classes.
+- Baseline CNN trains faster and is useful for quick prototyping or low-compute settings; EfficientNet offers better generalization at higher compute cost.
+- Remaining high-confidence errors indicate systematic confusions or ambiguous spectrograms; class imbalance still affects rare species.
 
-
-- All spectrograms are padded or cropped to a fixed width for batch consistency
-- Offline normalization is applied
-
-## Training Setup
-- Loss function: CrossEntropyLoss with class balancing
-- Optimizer: AdamW
-- Learning rate scheduling: ReduceLROnPlateau
-- Early stopping based on validation loss
-- Automatic Mixed Precision (AMP) enabled on GPU
-
-## Evaluation
-Models are evaluated exclusively on the test set using:
-- Accuracy
-- Precision
-- Recall
-- F1-score
-- Confusion matrix
-
-This ensures an unbiased comparison between the baseline CNN and the EfficientNet model.
-
-## Key Results
-- The baseline CNN achieves moderate performance and shows signs of underfitting
-- EfficientNet significantly outperforms the baseline across all evaluation metrics in this experimental result
-- Confusion matrices indicate a substantial reduction in misclassifications when using transfer learning
+## Reproducibility
+- Notebooks: notebooks/Main.ipynb, notebooks/Testing.ipynb, notebooks/Report.ipynb.
+- Training pipeline: src/train.py; preprocessing pipeline in src/preprocess/.
+- Results and figures: outputs/analysis_plots/, outputs/reports/, and saved checkpoints in outputs/.
 
 ## Technologies Used
-- Python
+- Python (3.8+)
+- Jupyter / IPython
 - PyTorch
 - Torchvision
 - Torchaudio
-- Scikit-learn
 - NumPy
+- Pandas
+- Matplotlib
+- Seaborn
+- scikit-learn
 - TQDM
+
+## Summary
+- EfficientNet‑B0 (transfer learning) clearly outperforms the Baseline CNN in accuracy, loss, precision and recall, at the cost of longer training time.
+- All figures, numeric reports and artifacts are available in notebooks/ and outputs/ for inspection and reproduction.
 
 ## Conclusion
 
